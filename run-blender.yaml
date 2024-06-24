@@ -12,18 +12,12 @@ spec:
           - name: aws_secret_access_key
           - name: aws_session_token
           - name: numberofframes
+          - name: bucket_name
+          - name: blender_file_name
       dag:
         tasks:
           - name: fetchfile
             template: fetchfile
-            arguments:
-              parameters:
-                - name: aws_access_key_id
-                  value: "{{inputs.parameters.aws_access_key_id}}"
-                - name: aws_secret_access_key
-                  value: "{{inputs.parameters.aws_secret_access_key}}"
-                - name: aws_session_token
-                  value: "{{inputs.parameters.aws_session_token}}"
           - name: runblender
             template: runblender-and-upload
             dependencies: [fetchfile]
@@ -36,53 +30,38 @@ spec:
                 - name: framenumber
                   value: "{{item}}"
                 - name: aws_access_key_id
-                  value: "{{inputs.parameters.aws_access_key_id}}"
+                  value: "{{workflow.parameters.aws_access_key_id}}"
                 - name: aws_secret_access_key
-                  value: "{{inputs.parameters.aws_secret_access_key}}"
+                  value: "{{workflow.parameters.aws_secret_access_key}}"
                 - name: aws_session_token
-                  value: "{{inputs.parameters.aws_session_token}}"
+                  value: "{{workflow.parameters.aws_session_token}}"
               artifacts:
                 - name: blender_file
                   from: "{{tasks.fetchfile.outputs.artifacts.blender_file}}"
           - name: runffpmeg
             template: download-and-runffmpeg
             dependencies: [runblender]
-            arguments:
-              parameters:
-                - name: aws_access_key_id
-                  value: "{{inputs.parameters.aws_access_key_id}}"
-                - name: aws_secret_access_key
-                  value: "{{inputs.parameters.aws_secret_access_key}}"
-                - name: aws_session_token
-                  value: "{{inputs.parameters.aws_session_token}}"
     - name: fetchfile
       inputs:
-        parameters:
-          - name: aws_access_key_id
-          - name: aws_secret_access_key
-          - name: aws_session_token
       outputs:
         artifacts:
           - name: blender_file
-            path: /tmp/Neck_Mech_BGE.blend
+            path: /tmp/{{workflow.parameters.blender_file_name}}
       script:
         image: amazon/aws-cli
         command: [bash] 
-        source: aws s3 cp s3://iiw-cpc-blender/Neck_Mech_BGE.blend /tmp
+        source: aws s3 cp s3://{{workflow.parameters.bucket_name}}/{{workflow.parameters.blender_file_name}} /tmp
         env:
           - name: AWS_ACCESS_KEY_ID
-            value: "{{inputs.parameters.aws_access_key_id}}"
+            value: "{{workflow.parameters.aws_access_key_id}}"
           - name: AWS_SECRET_ACCESS_KEY
-            value: "{{inputs.parameters.aws_secret_access_key}}"
+            value: "{{workflow.parameters.aws_secret_access_key}}"
           - name: AWS_SESSION_TOKEN
-            value: "{{inputs.parameters.aws_session_token}}"
+            value: "{{workflow.parameters.aws_session_token}}"
     - name: runblender-and-upload
       inputs:
         parameters:
           - name: framenumber
-          - name: aws_access_key_id
-          - name: aws_secret_access_key
-          - name: aws_session_token
         artifacts:
           - name: blender_file
       steps:
@@ -102,11 +81,11 @@ spec:
                 - name: framenumber
                   value: "{{inputs.parameters.framenumber}}"
                 - name: aws_access_key_id
-                  value: "{{inputs.parameters.aws_access_key_id}}"
+                  value: "{{workflow.parameters.aws_access_key_id}}"
                 - name: aws_secret_access_key
-                  value: "{{inputs.parameters.aws_secret_access_key}}"
+                  value: "{{workflow.parameters.aws_secret_access_key}}"
                 - name: aws_session_token
-                  value: "{{inputs.parameters.aws_session_token}}"
+                  value: "{{workflow.parameters.aws_session_token}}"
               artifacts:
                 - name: file
                   from: "{{steps.runblender.outputs.artifacts.output_file}}"
@@ -139,22 +118,17 @@ spec:
           requests:
             memory: 3500M
     - name: download-and-runffmpeg
-      inputs:
-        parameters:
-          - name: aws_access_key_id
-          - name: aws_secret_access_key
-          - name: aws_session_token
       steps:
         - - name: download
             template: download-files
             arguments:
               parameters:
                 - name: aws_access_key_id
-                  value: "{{inputs.parameters.aws_access_key_id}}"
+                  value: "{{workflow.parameters.aws_access_key_id}}"
                 - name: aws_secret_access_key
-                  value: "{{inputs.parameters.aws_secret_access_key}}"
+                  value: "{{workflow.parameters.aws_secret_access_key}}"
                 - name: aws_session_token
-                  value: "{{inputs.parameters.aws_session_token}}"
+                  value: "{{workflow.parameters.aws_session_token}}"
         - - name: runffmpeg
             template: runffmpeg
             arguments:
@@ -188,9 +162,6 @@ spec:
       inputs:
         parameters:
           - name: framenumber
-          - name: aws_access_key_id
-          - name: aws_secret_access_key
-          - name: aws_session_token
         artifacts:
           - name: file
             path: /tmp/file
@@ -198,20 +169,15 @@ spec:
         image: amazon/aws-cli
         command: [bash]
         source: |
-          aws s3 cp /tmp/file s3://iiw-cpc-blender/out/{{inputs.parameters.framenumber}}.png
+          aws s3 cp /tmp/file s3://{{workflow.parameters.bucket_name}}/out/{{inputs.parameters.framenumber}}.png
         env:
           - name: AWS_ACCESS_KEY_ID
-            value: "{{inputs.parameters.aws_access_key_id}}"
+            value: "{{workflow.parameters.aws_access_key_id}}"
           - name: AWS_SECRET_ACCESS_KEY
-            value: "{{inputs.parameters.aws_secret_access_key}}"
+            value: "{{workflow.parameters.aws_secret_access_key}}"
           - name: AWS_SESSION_TOKEN
-            value: "{{inputs.parameters.aws_session_token}}"
+            value: "{{workflow.parameters.aws_session_token}}"
     - name: download-files
-      inputs:
-        parameters:
-          - name: aws_access_key_id
-          - name: aws_secret_access_key
-          - name: aws_session_token
       outputs:
         artifacts:
           - name: files
@@ -221,12 +187,12 @@ spec:
         command: [bash]
         source: |
           mkdir /tmp/files
-          aws s3 sync s3://iiw-cpc-blender/out/ /tmp/files
+          aws s3 sync s3://{{workflow.parameters.bucket_name}}/out/ /tmp/files
         env:
           - name: AWS_ACCESS_KEY_ID
-            value: "{{inputs.parameters.aws_access_key_id}}"
+            value: "{{workflow.parameters.aws_access_key_id}}"
           - name: AWS_SECRET_ACCESS_KEY
-            value: "{{inputs.parameters.aws_secret_access_key}}"
+            value: "{{workflow.parameters.aws_secret_access_key}}"
           - name: AWS_SESSION_TOKEN
-            value: "{{inputs.parameters.aws_session_token}}"
+            value: "{{workflow.parameters.aws_session_token}}"
 
