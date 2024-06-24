@@ -1,0 +1,232 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow                  # new type of k8s spec
+metadata:
+  generateName: run-blender-    # name of the workflow spec
+spec:
+  entrypoint: start              # invoke the whalesay template
+  templates:
+    - name: start
+      inputs:
+        parameters:
+          - name: aws_access_key_id
+          - name: aws_secret_access_key
+          - name: aws_session_token
+          - name: numberofframes
+      dag:
+        tasks:
+          - name: fetchfile
+            template: fetchfile
+            arguments:
+              parameters:
+                - name: aws_access_key_id
+                  value: "{{inputs.parameters.aws_access_key_id}}"
+                - name: aws_secret_access_key
+                  value: "{{inputs.parameters.aws_secret_access_key}}"
+                - name: aws_session_token
+                  value: "{{inputs.parameters.aws_session_token}}"
+          - name: runblender
+            template: runblender-and-upload
+            dependencies: [fetchfile]
+            withSequence: 
+              start: 1
+              end: "{{inputs.parameters.numberofframes}}"
+              format: "%04d"
+            arguments:
+              parameters:
+                - name: framenumber
+                  value: "{{item}}"
+                - name: aws_access_key_id
+                  value: "{{inputs.parameters.aws_access_key_id}}"
+                - name: aws_secret_access_key
+                  value: "{{inputs.parameters.aws_secret_access_key}}"
+                - name: aws_session_token
+                  value: "{{inputs.parameters.aws_session_token}}"
+              artifacts:
+                - name: blender_file
+                  from: "{{tasks.fetchfile.outputs.artifacts.blender_file}}"
+          - name: runffpmeg
+            template: download-and-runffmpeg
+            dependencies: [runblender]
+            arguments:
+              parameters:
+                - name: aws_access_key_id
+                  value: "{{inputs.parameters.aws_access_key_id}}"
+                - name: aws_secret_access_key
+                  value: "{{inputs.parameters.aws_secret_access_key}}"
+                - name: aws_session_token
+                  value: "{{inputs.parameters.aws_session_token}}"
+    - name: fetchfile
+      inputs:
+        parameters:
+          - name: aws_access_key_id
+          - name: aws_secret_access_key
+          - name: aws_session_token
+      outputs:
+        artifacts:
+          - name: blender_file
+            path: /tmp/Neck_Mech_BGE.blend
+      script:
+        image: amazon/aws-cli
+        command: [bash] 
+        source: aws s3 cp s3://iiw-cpc-blender/Neck_Mech_BGE.blend /tmp
+        env:
+          - name: AWS_ACCESS_KEY_ID
+            value: "{{inputs.parameters.aws_access_key_id}}"
+          - name: AWS_SECRET_ACCESS_KEY
+            value: "{{inputs.parameters.aws_secret_access_key}}"
+          - name: AWS_SESSION_TOKEN
+            value: "{{inputs.parameters.aws_session_token}}"
+    - name: runblender-and-upload
+      inputs:
+        parameters:
+          - name: framenumber
+          - name: aws_access_key_id
+          - name: aws_secret_access_key
+          - name: aws_session_token
+        artifacts:
+          - name: blender_file
+      steps:
+        - - name: runblender
+            template: runblender
+            arguments:
+              parameters:
+                - name: framenumber
+                  value: "{{inputs.parameters.framenumber}}"
+              artifacts:
+                - name: blender_file
+                  from: "{{inputs.artifacts.blender_file}}"
+        - - name: upload
+            template: upload-file
+            arguments:
+              parameters:
+                - name: framenumber
+                  value: "{{inputs.parameters.framenumber}}"
+                - name: aws_access_key_id
+                  value: "{{inputs.parameters.aws_access_key_id}}"
+                - name: aws_secret_access_key
+                  value: "{{inputs.parameters.aws_secret_access_key}}"
+                - name: aws_session_token
+                  value: "{{inputs.parameters.aws_session_token}}"
+              artifacts:
+                - name: file
+                  from: "{{steps.runblender.outputs.artifacts.output_file}}"
+    - name: runblender
+      retryStrategy:
+        limit: 10
+        retryPolicy: "Always"
+        backoff:
+          duration: "1"      # Must be a string. Default unit is seconds. Could also be a Duration, e.g.: "2m", "6h", "1d"
+          factor: 2
+          maxDuration: "1m"  # Must be a string. Default unit is seconds. Could also be a Duration, e.g.: "2m", "6h", "1d"
+        affinity:
+          nodeAntiAffinity: {}
+      inputs:
+        parameters:
+          - name: framenumber
+        artifacts:
+          - name: blender_file
+            path: /tmp/blender_file
+      outputs:
+        artifacts:
+          - name: output_file
+            path: "/tmp/{{inputs.parameters.framenumber}}.png"
+      script:
+        image: linuxserver/blender
+        command: [bash]
+        source: |
+          blender /tmp/blender_file -b -f "{{inputs.parameters.framenumber}}"
+        resources:
+          requests:
+            memory: 3500M
+    - name: download-and-runffmpeg
+      inputs:
+        parameters:
+          - name: aws_access_key_id
+          - name: aws_secret_access_key
+          - name: aws_session_token
+      steps:
+        - - name: download
+            template: download-files
+            arguments:
+              parameters:
+                - name: aws_access_key_id
+                  value: "{{inputs.parameters.aws_access_key_id}}"
+                - name: aws_secret_access_key
+                  value: "{{inputs.parameters.aws_secret_access_key}}"
+                - name: aws_session_token
+                  value: "{{inputs.parameters.aws_session_token}}"
+        - - name: runffmpeg
+            template: runffmpeg
+            arguments:
+              artifacts:
+                - name: files
+                  from: "{{steps.download.outputs.artifacts.files}}"
+    - name: runffmpeg
+      inputs:
+        artifacts:
+          - name: files
+            path: /tmp/files/
+      outputs:
+        artifacts:
+          - name: result
+            path: /tmp/out.mp4
+      script:
+        image: linuxserver/ffmpeg
+        command: [bash]
+        source: |
+          ffmpeg -i /tmp/files/\%04d.png -r 30 /tmp/out.mp4
+    - name: upload-file
+      retryStrategy:
+        limit: 10
+        retryPolicy: "Always"
+        backoff:
+          duration: "1"      # Must be a string. Default unit is seconds. Could also be a Duration, e.g.: "2m", "6h", "1d"
+          factor: 2
+          maxDuration: "1m"  # Must be a string. Default unit is seconds. Could also be a Duration, e.g.: "2m", "6h", "1d"
+        affinity:
+          nodeAntiAffinity: {}
+      inputs:
+        parameters:
+          - name: framenumber
+          - name: aws_access_key_id
+          - name: aws_secret_access_key
+          - name: aws_session_token
+        artifacts:
+          - name: file
+            path: /tmp/file
+      script:
+        image: amazon/aws-cli
+        command: [bash]
+        source: |
+          aws s3 cp /tmp/file s3://iiw-cpc-blender/out/{{inputs.parameters.framenumber}}.png
+        env:
+          - name: AWS_ACCESS_KEY_ID
+            value: "{{inputs.parameters.aws_access_key_id}}"
+          - name: AWS_SECRET_ACCESS_KEY
+            value: "{{inputs.parameters.aws_secret_access_key}}"
+          - name: AWS_SESSION_TOKEN
+            value: "{{inputs.parameters.aws_session_token}}"
+    - name: download-files
+      inputs:
+        parameters:
+          - name: aws_access_key_id
+          - name: aws_secret_access_key
+          - name: aws_session_token
+      outputs:
+        artifacts:
+          - name: files
+            path: /tmp/files
+      script:
+        image: amazon/aws-cli
+        command: [bash]
+        source: |
+          mkdir /tmp/files
+          aws s3 sync s3://iiw-cpc-blender/out/ /tmp/files
+        env:
+          - name: AWS_ACCESS_KEY_ID
+            value: "{{inputs.parameters.aws_access_key_id}}"
+          - name: AWS_SECRET_ACCESS_KEY
+            value: "{{inputs.parameters.aws_secret_access_key}}"
+          - name: AWS_SESSION_TOKEN
+            value: "{{inputs.parameters.aws_session_token}}"
+
