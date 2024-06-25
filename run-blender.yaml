@@ -4,6 +4,9 @@ metadata:
   generateName: run-blender-    # name of the workflow spec
 spec:
   entrypoint: start              # invoke the whalesay template
+  retryStrategy:
+   retryPolicy: OnError
+   limit: 10
   templates:
     - name: start
       inputs:
@@ -90,15 +93,6 @@ spec:
                 - name: file
                   from: "{{steps.runblender.outputs.artifacts.output_file}}"
     - name: runblender
-      retryStrategy:
-        limit: 10
-        retryPolicy: "Always"
-        backoff:
-          duration: "1"      # Must be a string. Default unit is seconds. Could also be a Duration, e.g.: "2m", "6h", "1d"
-          factor: 2
-          maxDuration: "1m"  # Must be a string. Default unit is seconds. Could also be a Duration, e.g.: "2m", "6h", "1d"
-        affinity:
-          nodeAntiAffinity: {}
       inputs:
         parameters:
           - name: framenumber
@@ -150,15 +144,6 @@ spec:
         source: |
           ffmpeg -i /tmp/files/\%04d.png -r 30 /tmp/out.mp4
     - name: upload-file
-      retryStrategy:
-        limit: 10
-        retryPolicy: "Always"
-        backoff:
-          duration: "1"      # Must be a string. Default unit is seconds. Could also be a Duration, e.g.: "2m", "6h", "1d"
-          factor: 2
-          maxDuration: "1m"  # Must be a string. Default unit is seconds. Could also be a Duration, e.g.: "2m", "6h", "1d"
-        affinity:
-          nodeAntiAffinity: {}
       inputs:
         parameters:
           - name: framenumber
